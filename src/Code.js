@@ -1,0 +1,1 @@
+function hello(){ Logger.log("V3 ready"); }
