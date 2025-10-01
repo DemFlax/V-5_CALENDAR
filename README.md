@@ -1,2 +1,1 @@
-# V-3_CALENDAR
-Sync GAS ⇄ GitHub con clasp.
+﻿V-5_CALENDAR
