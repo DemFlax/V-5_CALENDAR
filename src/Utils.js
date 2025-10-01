@@ -114,7 +114,15 @@ function aplicarActualizacionesEnLote(sheet, actualizaciones) {
   if (actualizaciones.length === 0) return;
   
   for (const act of actualizaciones) {
-    sheet.getRange(act.fila, act.columna).setValue(act.valor);
+    const rango = sheet.getRange(act.fila, act.columna);
+    
+    // SOLO eliminar validación si el valor NO es vacío
+    // Mantener desplegables cuando esté vacío para permitir nuevas asignaciones
+    if (act.valor !== '' && act.valor !== null && act.valor !== undefined) {
+      rango.clearDataValidations();
+    }
+    
+    rango.setValue(act.valor);
   }
 }
 

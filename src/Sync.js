@@ -346,20 +346,18 @@ function escribirEstadosEnCalendarioGuia(guia) {
       const data = sheet.getDataRange().getValues();
       
       const actualizaciones = [];
+      const formateos = [];
       const COL_LOCK = CONFIG.GUIA_CAL.COL_LOCK_STATUS;
       const COL_TIMESTAMP = CONFIG.GUIA_CAL.COL_TIMESTAMP;
-      const FILAS_POR_DIA = CONFIG.GUIA_CAL.FILAS_POR_DIA;
       
-      // Recorrer días
-      for (let row = 0; row < data.length; row += FILAS_POR_DIA) {
+      // Recorrer TODAS las filas buscando números de día
+      for (let row = 0; row < data.length - 2; row++) {
         for (let col = 0; col < 7; col++) {
-          const numeroDia = data[row][col];
+          const celda = data[row][col];
           
-          if (typeof numeroDia === 'number' && numeroDia >= 1 && numeroDia <= 31) {
+          if (typeof celda === 'number' && celda >= 1 && celda <= 31) {
+            const numeroDia = celda;
             const fecha = new Date(anio, mes - 1, numeroDia);
-            
-            // Validar que tenemos suficientes filas
-            if (row + 2 >= data.length) continue;
             
             // Actualizar MAÑANA
             const turnoManana = guia.obtenerTurno(fecha, 'MANANA');
@@ -378,6 +376,14 @@ function escribirEstadosEnCalendarioGuia(guia) {
                 fila: row + 2,
                 columna: COL_TIMESTAMP + 1,
                 valor: new Date()
+              });
+              
+              // AGREGAR FORMATO DE COLOR
+              const color = obtenerColorParaEstado(turnoManana.estadoFinal);
+              formateos.push({
+                fila: row + 2,
+                columna: col + 1,
+                color: color
               });
             }
             
@@ -399,13 +405,22 @@ function escribirEstadosEnCalendarioGuia(guia) {
                 columna: COL_TIMESTAMP + 1,
                 valor: new Date()
               });
+              
+              // AGREGAR FORMATO DE COLOR
+              const color = obtenerColorParaEstado(turnoTarde.estadoFinal);
+              formateos.push({
+                fila: row + 3,
+                columna: col + 1,
+                color: color
+              });
             }
           }
         }
       }
       
-      // Aplicar actualizaciones
+      // Aplicar actualizaciones y formatos
       aplicarActualizacionesEnLote(sheet, actualizaciones);
+      aplicarFormateosEnLote(sheet, formateos);
     }
     
   } catch (error) {
