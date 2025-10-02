@@ -47,6 +47,7 @@ class ClaseTurno {
     this.estadoGuia = '';
     this.lockStatusGuia = '';
     this.timestampGuia = null;
+    this.timestampMaster = null; // AGREGADO para First Wins
     
     // Estado resuelto después de aplicar reglas
     this.estadoFinal = '';
@@ -92,13 +93,31 @@ class ClaseTurno {
         this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
         this.lockStatusFinal = lockCorrespondiente;
       } else if (this.lockStatusGuia === LOCK.GUIA_NO_DISPONIBLE) {
-        // Conflicto: Master intenta asignar pero guía marcó NO DISPONIBLE
+        // CONFLICTO: Master intenta asignar pero guía marcó NO DISPONIBLE
         // Aplicar First Wins: comparar timestamps
-        // Si no hay timestamp del master, asumir que es más reciente
-        this.estadoFinal = VIS.NO_DISPONIBLE;
-        this.lockStatusFinal = LOCK.GUIA_NO_DISPONIBLE;
-        // Master no puede sobreescribir - mantener NO DISPONIBLE
-        this.requiereActualizacionMaster = true;
+        
+        if (this.timestampMaster && this.timestampGuia) {
+          if (this.timestampMaster < this.timestampGuia) {
+            // GANA MASTER (actuó primero)
+            this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
+            this.lockStatusFinal = lockCorrespondiente;
+            this.requiereActualizacionMaster = true;
+            this.requiereActualizacionGuia = true;
+            this.requiereNotificacion = true;
+          } else {
+            // GANA GUÍA (actuó primero)
+            this.estadoFinal = VIS.NO_DISPONIBLE;
+            this.lockStatusFinal = LOCK.GUIA_NO_DISPONIBLE;
+            this.requiereActualizacionMaster = true;
+          }
+        } else {
+          // Sin timestamps válidos, asumir que Master gana (ejecución actual)
+          this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
+          this.lockStatusFinal = lockCorrespondiente;
+          this.requiereActualizacionMaster = true;
+          this.requiereActualizacionGuia = true;
+          this.requiereNotificacion = true;
+        }
       } else {
         // Asignación nueva o reasignación
         this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);

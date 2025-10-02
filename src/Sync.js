@@ -10,6 +10,7 @@ function ejecutarSincronizacion() {
   try {
     Logger.log('=== INICIO SINCRONIZACIÓN ===');
     const inicio = new Date();
+    const timestampEjecucion = new Date(); // Timestamp de esta ejecución (Master)
     
     // 1. Obtener guías del registro
     const guias = obtenerGuiasDelRegistro();
@@ -20,75 +21,29 @@ function ejecutarSincronizacion() {
       return;
     }
     
-    // LOG: Info de guías
-    for (const guia of guias) {
-      Logger.log(`Guía: ${guia.codigo} - ${guia.nombre} - FileID: ${guia.fileId}`);
-    }
-    
-    // 2. Leer estado actual de la Hoja Maestra
-    Logger.log('--- Leyendo Hoja Maestra ---');
-    leerEstadoHojaMaestra(guias);
-    
-    // LOG: Turnos leídos del Master
-    for (const guia of guias) {
-      const turnos = guia.obtenerTodosTurnos();
-      Logger.log(`${guia.codigo}: ${turnos.length} turnos leídos del Master`);
-      for (let i = 0; i < Math.min(3, turnos.length); i++) {
-        const t = turnos[i];
-        Logger.log(`  Master: ${formatearFecha(t.fecha)} ${t.tipoTurno} = "${t.estadoMaster}"`);
-      }
-    }
+    // 2. Leer estado actual de la Hoja Maestra (con timestamp)
+    leerEstadoHojaMaestra(guias, timestampEjecucion);
     
     // 3. Leer estado de cada calendario de guía
-    Logger.log('--- Leyendo Calendarios de Guías ---');
     for (const guia of guias) {
       leerEstadoCalendarioGuia(guia);
-      
-      // LOG: Estados leídos del guía
-      const turnos = guia.obtenerTodosTurnos();
-      Logger.log(`${guia.codigo}: ${turnos.length} turnos después de leer calendario`);
-      for (let i = 0; i < Math.min(3, turnos.length); i++) {
-        const t = turnos[i];
-        Logger.log(`  Guía: ${formatearFecha(t.fecha)} ${t.tipoTurno} = "${t.estadoGuia}" Lock="${t.lockStatusGuia}"`);
-      }
     }
     
     // 4. Resolver estados aplicando reglas de negocio
-    Logger.log('--- Resolviendo Estados ---');
-    let contadorActualizacionesMaster = 0;
-    let contadorActualizacionesGuia = 0;
-    let contadorNotificaciones = 0;
-    
     for (const guia of guias) {
       for (const turno of guia.obtenerTodosTurnos()) {
         turno.resolverEstado();
-        
-        if (turno.requiereActualizacionMaster) contadorActualizacionesMaster++;
-        if (turno.requiereActualizacionGuia) contadorActualizacionesGuia++;
-        if (turno.requiereNotificacion) contadorNotificaciones++;
-        
-        // LOG: Primeros turnos resueltos
-        if (contadorActualizacionesMaster <= 3 || contadorActualizacionesGuia <= 3) {
-          Logger.log(`${guia.codigo} ${formatearFecha(turno.fecha)} ${turno.tipoTurno}:`);
-          Logger.log(`  EstadoFinal="${turno.estadoFinal}" Lock="${turno.lockStatusFinal}"`);
-          Logger.log(`  ActMaster=${turno.requiereActualizacionMaster} ActGuia=${turno.requiereActualizacionGuia} Notif=${turno.requiereNotificacion}`);
-        }
       }
     }
     
-    Logger.log(`RESUMEN: ActMaster=${contadorActualizacionesMaster} ActGuia=${contadorActualizacionesGuia} Notif=${contadorNotificaciones}`);
-    
     // 5. Escribir estados resueltos
-    Logger.log('--- Escribiendo en Hoja Maestra ---');
     escribirEstadosEnHojaMaestra(guias);
     
-    Logger.log('--- Escribiendo en Calendarios de Guías ---');
     for (const guia of guias) {
       escribirEstadosEnCalendarioGuia(guia);
     }
     
     // 6. Procesar notificaciones y calendario
-    Logger.log('--- Procesando Notificaciones y Calendar ---');
     procesarNotificacionesYCalendario(guias);
     
     const fin = new Date();
@@ -104,7 +59,7 @@ function ejecutarSincronizacion() {
 /**
  * Lee el estado actual de la Hoja Maestra
  */
-function leerEstadoHojaMaestra(guias) {
+function leerEstadoHojaMaestra(guias, timestampEjecucion) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheets = ss.getSheets();
   
@@ -140,15 +95,16 @@ function leerEstadoHojaMaestra(guias) {
         const estadoManana = row[columnas.manana] || '';
         const estadoTarde = row[columnas.tarde] || '';
         
-        // Crear o actualizar turnos
+        // Crear o actualizar turnos MAÑANA
         let turnoManana = guia.obtenerTurno(fecha, 'MANANA');
         if (!turnoManana) {
           turnoManana = new ClaseTurno(fecha, 'MANANA', guia);
           guia.agregarTurno(fecha, 'MANANA', turnoManana);
         }
         turnoManana.estadoMaster = estadoManana;
+        turnoManana.timestampMaster = timestampEjecucion; // Timestamp del Master
         
-        // Determinar tipo de turno de tarde (T1, T2, T3 o genérico TARDE)
+        // Crear o actualizar turnos TARDE
         const tipoTarde = determinarTipoTurnoTarde(estadoTarde);
         let turnoTarde = guia.obtenerTurno(fecha, tipoTarde);
         if (!turnoTarde) {
@@ -156,6 +112,7 @@ function leerEstadoHojaMaestra(guias) {
           guia.agregarTurno(fecha, tipoTarde, turnoTarde);
         }
         turnoTarde.estadoMaster = estadoTarde;
+        turnoTarde.timestampMaster = timestampEjecucion; // Timestamp del Master
       }
     }
   }
@@ -176,7 +133,7 @@ function leerEstadoCalendarioGuia(guia) {
       const { mes, anio } = extraerMesAnioDeNombre(nombre);
       const data = sheet.getDataRange().getValues();
       
-      // Iterar por semanas y días
+      // Iterar por días del calendario
       leerDiasCalendarioGuia(data, mes, anio, guia);
     }
     
@@ -184,18 +141,21 @@ function leerEstadoCalendarioGuia(guia) {
     Logger.log(`Error leyendo calendario de ${guia.codigo}: ${error.toString()}`);
   }
 }
-
 /**
  * Lee los días de un calendario de guía específico
  */
 function leerDiasCalendarioGuia(data, mes, anio, guia) {
   const COL_LOCK = CONFIG.GUIA_CAL.COL_LOCK_STATUS;
   const COL_TIMESTAMP = CONFIG.GUIA_CAL.COL_TIMESTAMP;
+  const FILAS_POR_DIA = 3;
   
-  // Recorrer TODAS las filas buscando números de día
-  for (let row = 0; row < data.length - 2; row++) {
+  // Iterar por BLOQUES de 3 filas (número día, MAÑANA, TARDE)
+  // Empezar desde fila 1 (después de encabezados) y avanzar de 3 en 3
+  for (let rowBloque = 1; rowBloque < data.length; rowBloque += FILAS_POR_DIA) {
+    
+    // Dentro de cada bloque, revisar las 7 columnas (días de la semana)
     for (let col = 0; col < 7; col++) {
-      const celda = data[row][col];
+      const celda = data[rowBloque][col];
       
       // Verificar si la celda contiene un número de día
       if (typeof celda === 'number' && celda >= 1 && celda <= 31) {
@@ -204,10 +164,13 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
         try {
           const fecha = new Date(anio, mes - 1, numeroDia);
           
-          // Leer MAÑANA (fila actual +1)
-          const estadoManana = data[row + 1][col] || '';
-          const lockManana = data[row + 1][COL_LOCK] || '';
-          const timestampManana = data[row + 1][COL_TIMESTAMP] || null;
+          // Leer MAÑANA (fila del bloque + 1)
+          const filaManana = rowBloque + 1;
+          if (filaManana >= data.length) continue;
+          
+          const estadoManana = data[filaManana][col] || '';
+          const lockManana = data[filaManana][COL_LOCK] || '';
+          const timestampManana = data[filaManana][COL_TIMESTAMP] || null;
           
           let turnoManana = guia.obtenerTurno(fecha, 'MANANA');
           if (!turnoManana) {
@@ -218,10 +181,13 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
           turnoManana.lockStatusGuia = lockManana;
           turnoManana.timestampGuia = timestampManana;
           
-          // Leer TARDE (fila actual +2)
-          const estadoTarde = data[row + 2][col] || '';
-          const lockTarde = data[row + 2][COL_LOCK] || '';
-          const timestampTarde = data[row + 2][COL_TIMESTAMP] || null;
+          // Leer TARDE (fila del bloque + 2)
+          const filaTarde = rowBloque + 2;
+          if (filaTarde >= data.length) continue;
+          
+          const estadoTarde = data[filaTarde][col] || '';
+          const lockTarde = data[filaTarde][COL_LOCK] || '';
+          const timestampTarde = data[filaTarde][COL_TIMESTAMP] || null;
           
           const tipoTarde = determinarTipoTurnoTarde(estadoTarde);
           let turnoTarde = guia.obtenerTurno(fecha, tipoTarde);
@@ -234,7 +200,6 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
           turnoTarde.timestampGuia = timestampTarde;
           
         } catch (error) {
-          // Fecha inválida, saltar
           Logger.log(`Fecha inválida: ${numeroDia}/${mes}/${anio}`);
         }
       }
@@ -280,7 +245,6 @@ function escribirEstadosEnHojaMaestra(guias) {
           
           // SOLO escribir estados NO vacíos
           // Estados válidos: "NO DISPONIBLE", "ASIGNADO M"
-          // NO escribir: "", "MAÑANA", "TARDE"
           if (estadoFinal === VIS.NO_DISPONIBLE || estadoFinal === VIS.ASIGNADO_M) {
             actualizaciones.push({
               fila: i + 1,
@@ -302,7 +266,6 @@ function escribirEstadosEnHojaMaestra(guias) {
           
           // SOLO escribir estados NO vacíos
           // Estados válidos: "NO DISPONIBLE", "ASIGNADO T1/T2/T3"
-          // NO escribir: "", "MAÑANA", "TARDE"
           if (estadoFinal === VIS.NO_DISPONIBLE || 
               estadoFinal === VIS.ASIGNADO_T1 || 
               estadoFinal === VIS.ASIGNADO_T2 || 
@@ -347,13 +310,15 @@ function escribirEstadosEnCalendarioGuia(guia) {
       
       const actualizaciones = [];
       const formateos = [];
+      const desplegablesRecrear = []; // NUEVO
       const COL_LOCK = CONFIG.GUIA_CAL.COL_LOCK_STATUS;
       const COL_TIMESTAMP = CONFIG.GUIA_CAL.COL_TIMESTAMP;
+      const FILAS_POR_DIA = 3;
       
-      // Recorrer TODAS las filas buscando números de día
-      for (let row = 0; row < data.length - 2; row++) {
+      // Iterar por bloques de 3 filas
+      for (let rowBloque = 1; rowBloque < data.length; rowBloque += FILAS_POR_DIA) {
         for (let col = 0; col < 7; col++) {
-          const celda = data[row][col];
+          const celda = data[rowBloque][col];
           
           if (typeof celda === 'number' && celda >= 1 && celda <= 31) {
             const numeroDia = celda;
@@ -362,57 +327,75 @@ function escribirEstadosEnCalendarioGuia(guia) {
             // Actualizar MAÑANA
             const turnoManana = guia.obtenerTurno(fecha, 'MANANA');
             if (turnoManana && turnoManana.requiereActualizacionGuia) {
+              const filaManana = rowBloque + 1;
+              
               actualizaciones.push({
-                fila: row + 2,
+                fila: filaManana + 1,
                 columna: col + 1,
                 valor: turnoManana.estadoFinal
               });
               actualizaciones.push({
-                fila: row + 2,
+                fila: filaManana + 1,
                 columna: COL_LOCK + 1,
                 valor: turnoManana.lockStatusFinal
               });
               actualizaciones.push({
-                fila: row + 2,
+                fila: filaManana + 1,
                 columna: COL_TIMESTAMP + 1,
                 valor: new Date()
               });
               
-              // AGREGAR FORMATO DE COLOR
               const color = obtenerColorParaEstado(turnoManana.estadoFinal);
               formateos.push({
-                fila: row + 2,
+                fila: filaManana + 1,
                 columna: col + 1,
                 color: color
               });
+              
+              // Si el estado final es inicial (MAÑANA/TARDE), recrear desplegable
+              if (turnoManana.estadoFinal === CONFIG.ESTADOS_VISIBLES.MANANA_INICIAL) {
+                desplegablesRecrear.push({
+                  fila: filaManana + 1,
+                  columna: col + 1
+                });
+              }
             }
             
             // Actualizar TARDE
             const turnoTarde = buscarTurnoTarde(guia, fecha);
             if (turnoTarde && turnoTarde.requiereActualizacionGuia) {
+              const filaTarde = rowBloque + 2;
+              
               actualizaciones.push({
-                fila: row + 3,
+                fila: filaTarde + 1,
                 columna: col + 1,
                 valor: turnoTarde.estadoFinal
               });
               actualizaciones.push({
-                fila: row + 3,
+                fila: filaTarde + 1,
                 columna: COL_LOCK + 1,
                 valor: turnoTarde.lockStatusFinal
               });
               actualizaciones.push({
-                fila: row + 3,
+                fila: filaTarde + 1,
                 columna: COL_TIMESTAMP + 1,
                 valor: new Date()
               });
               
-              // AGREGAR FORMATO DE COLOR
               const color = obtenerColorParaEstado(turnoTarde.estadoFinal);
               formateos.push({
-                fila: row + 3,
+                fila: filaTarde + 1,
                 columna: col + 1,
                 color: color
               });
+              
+              // Si el estado final es inicial (TARDE), recrear desplegable
+              if (turnoTarde.estadoFinal === CONFIG.ESTADOS_VISIBLES.TARDE_INICIAL) {
+                desplegablesRecrear.push({
+                  fila: filaTarde + 1,
+                  columna: col + 1
+                });
+              }
             }
           }
         }
@@ -421,6 +404,11 @@ function escribirEstadosEnCalendarioGuia(guia) {
       // Aplicar actualizaciones y formatos
       aplicarActualizacionesEnLote(sheet, actualizaciones);
       aplicarFormateosEnLote(sheet, formateos);
+      
+      // Recrear desplegables donde sea necesario
+      for (const desp of desplegablesRecrear) {
+        crearDesplegableGuia(sheet, desp.fila, desp.columna);
+      }
     }
     
   } catch (error) {
