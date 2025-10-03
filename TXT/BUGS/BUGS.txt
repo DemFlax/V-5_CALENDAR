@@ -1,0 +1,84 @@
+Entendido. Entrego análisis y plan sin código.
+
+# Comprensión del problema
+
+Necesitas auditoría técnica completa del sistema GAS (Master↔Guías) para detectar fallos y proponer correcciones. No quieres código hasta tu visto bueno. Cada entrega futura deberá ser una versión completa y unificada.
+
+# Solución propuesta
+
+A) Hallazgos críticos y correcciones sugeridas
+
+1. Timestamp del MASTER mal modelado → rompe “first wins”.
+   • Problema: en cada sync se asigna `timestampMaster = now()` para todas las celdas (Sync.js L105, L115). Esto hace que el Master “gane” por defecto aunque no haya cambiado nada.
+   • Corrección: registrar la hora real de edición del Master, no la hora de ejecución. Dos opciones viables:
+   a) Trigger instalable `onEdit` en Master que marque un timestamp por celda en columnas ocultas del Master, o
+   b) Persistencia en Properties/Hidden sheet con hash por celda y timestamp cuando cambie.
+   • Recomendación: opción (a) por trazabilidad y simplicidad de comparación contra el timestamp del Guía.
+
+2. Desplegables y semántica de estados no alineados con reglas canónicas.
+   • MASTER: falta valor vacío y etiquetas canónicas. Ahora: MAÑANA = `[ASIGNAR MAÑANA, LIBERAR]` y TARDE = `[ASIGNAR T1,T2,T3, LIBERAR]` (CreateGuide.js L203–226; Sync.js L476–488).
+   • GUÍA: usa `[NO DISPONIBLE, LIBERAR]` (CreateGuide.js L431–438) en vez de `["", "NO DISPONIBLE", "REVERTIR"]`.
+   • Corrección: unificar con tus reglas:
+   – MASTER M: `["", "LIBERAR", "ASIGNAR M"]`
+   – MASTER T: `["", "LIBERAR", "ASIGNAR T1", "ASIGNAR T2", "ASIGNAR T3"]`
+   – GUÍA: `["", "NO DISPONIBLE", "REVERTIR"]`
+   • Nota: habrá que ajustar la lógica de `Classes.js` para mapear nuevas etiquetas visibles a locks (`G-ND`, `M-A*`) y revertir correctamente.
+
+3. Inserción de columnas del nuevo guía mal posicionada en Master.
+   • Problema: se usa `sheet.getLastColumn()` (CreateGuide.js L156–160) y se agregan columnas al final, ignorando si hay columnas técnicas u otros artefactos. Eso explica desplazamientos como B/C → C/D.
+   • Corrección: localizar la última pareja “GXX — NOMBRE” en fila 1 y sus subencabezados “MAÑANA/TARDE” en fila 2, e insertar justo después. Si no hay guías, insertar en B:C determinístico.
+
+4. Falta exclusión mutua en sync.
+   • Problema: no hay `LockService` en el proyecto. Ejecutar cada minuto puede solaparse si una corrida se alarga.
+   • Corrección: `LockService.getScriptLock()` al inicio de `ejecutarSincronizacion()` con timeout y salida segura si ya hay una ejecución en curso.
+
+5. ID de carpeta de guías no conforme.
+   • Ahora: `CONFIG.CARPETA_GUIAS_ID = '1qZjy2Syg5Ag-…'` (Config.js L9).
+   • Requisito del proyecto: la carpeta fija indicada por ti.
+   • Corrección: usar el ID que definas y moverlo a Script Properties para no re-compilar.
+
+6. Calendar: búsqueda frágil por ventana de 1 minuto.
+   • Ahora: `getEvents(fechaInicio, fechaInicio+1min)` (Calendar.js L27–33). Si el evento no está exactamente a HH:15 se pierde.
+   • Corrección:
+   – Confirmar horarios exactos. Código usa 12:15, 17:15, 18:15, 19:15 (Config.js L62–67).
+   – Ampliar ventana a ±10 min y validar por hora:minuto exactos.
+   – Ya existe dedupe de invitados (Calendar.js L39–47), correcto.
+
+7. Regla 14 h previas no implementada.
+   • Problema: no se bloquean cambios del guía cuando faltan <14 h para el turno.
+   • Corrección: en resolución de `ClaseTurno`, si `now > startTime - 14h`, ignorar nuevos cambios del guía salvo liberación del Master.
+
+8. Default de tarde a T1 puede inducir estados fantasma.
+   • Ahora: `determinarTipoTurnoTarde` devuelve `'T1'` si vacío (Utils.js L69–81).
+   • Corrección: devolver `null` si el estado visible no identifica T1/T2/T3. Solo instanciar turno tarde si hay selección válida.
+
+9. Colores y UX.
+   • Ahora: verde `#00FF00` y rojo `#FF0000` (Config.js L56–60).
+   • Corrección sugerida: usar paleta más legible en Sheets (`#C6EFCE` verde asignado, `#FFC7CE` rojo no disponible) y blanco para disponible.
+
+10. Autorización de `ScriptApp.getProjectTriggers`.
+    • appsscript.json ya incluye `https://www.googleapis.com/auth/script.scriptapp`. Si salta el error de permisos, basta ejecutar cualquier función del menú para forzar el consentimiento y reintentar.
+
+11. Persistencia de configuraciones.
+    • Mover `CARPETA_GUIAS_ID` y `MASTER_CALENDAR_ID` a Script Properties y añadir menú para leer/editar. Ya existe UI para Calendar ID; replicar para carpeta.
+
+12. Protección de columnas ocultas en Guía.
+    • Se protegen H:I (CreateGuide.js L312–316). Correcto, pero verificar que el script es propietario para poder escribir sin excepciones. Añadir manejo de errores por si la propiedad cambia.
+
+B) Riesgos de regresión al corregir
+• Cambiar etiquetas visibles forzará re-mapeo en `Classes.js` y en los validadores.
+• Añadir timestamps del Master implicará nuevas columnas ocultas o una hoja oculta auxiliar; habrá que migrar sin romper hojas existentes.
+• El ajuste de inserción de columnas debe ser idempotente y no duplicar guías.
+
+C) Plan de entrega cuando confirmes
+
+1. Refactor sincronización: lock + timestamp bien definidos, `LockService`, control 14 h, nulos en tarde.
+2. Normalización de DV y etiquetas visibles según tus reglas.
+3. Inserción robusta de columnas del guía.
+4. Calendar: ventana de búsqueda y confirmación de horarios.
+5. Config a Script Properties y menús.
+6. Paleta de colores.
+7. Migrador: script único que repara validaciones, recoloca encabezados, y rellena columnas ocultas sin perder datos.
+
+D) Pregunta clave para avanzar al 95%
+¿Aceptas que capturemos el timestamp real de cambios del MASTER con un trigger instalable `onEdit` y columnas ocultas en el MASTER para comparar contra el timestamp del GUÍA y así cumplir “first wins” de forma fiable?

@@ -109,6 +109,7 @@ function obtenerColorParaEstado(estado) {
 
 /**
  * Aplica actualizaciones en lote a una hoja
+ * CORREGIDO: Elimina SIEMPRE la validación antes de escribir
  */
 function aplicarActualizacionesEnLote(sheet, actualizaciones) {
   if (actualizaciones.length === 0) return;
@@ -116,12 +117,11 @@ function aplicarActualizacionesEnLote(sheet, actualizaciones) {
   for (const act of actualizaciones) {
     const rango = sheet.getRange(act.fila, act.columna);
     
-    // SOLO eliminar validación si el valor NO es vacío
-    // Mantener desplegables cuando esté vacío para permitir nuevas asignaciones
-    if (act.valor !== '' && act.valor !== null && act.valor !== undefined) {
-      rango.clearDataValidations();
-    }
+    // CRÍTICO: SIEMPRE eliminar validación antes de escribir
+    // Los desplegables se recrearán después si es necesario
+    rango.clearDataValidations();
     
+    // Escribir el valor
     rango.setValue(act.valor);
   }
 }

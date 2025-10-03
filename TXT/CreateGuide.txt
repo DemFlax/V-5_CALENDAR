@@ -360,3 +360,80 @@ function enviarEmailCreacionGuia(nombre, email, urlCalendario) {
     Logger.log(`Error enviando email de bienvenida: ${error.toString()}`);
   }
 }
+/**
+ * Crea desplegable MAÑANA del Master en una celda específica
+ */
+function crearDesplegableMasterManana(sheet, fila, columna) {
+  const VIS = CONFIG.ESTADOS_VISIBLES;
+  const opciones = [VIS.ASIGNAR_MANANA, VIS.LIBERAR_MASTER];
+  
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  
+  sheet.getRange(fila, columna).setDataValidation(regla);
+}
+
+/**
+ * Crea desplegable TARDE del Master en una celda específica
+ */
+function crearDesplegableMasterTarde(sheet, fila, columna) {
+  const VIS = CONFIG.ESTADOS_VISIBLES;
+  const opciones = [VIS.ASIGNAR_T1, VIS.ASIGNAR_T2, VIS.ASIGNAR_T3, VIS.LIBERAR_MASTER];
+  
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  
+  sheet.getRange(fila, columna).setDataValidation(regla);
+}/**
+ * FUNCIONES ADICIONALES PARA DESPLEGABLES
+ * Agregar estas funciones al archivo CreateGuide.js existente
+ */
+
+/**
+ * Crea desplegable MAÑANA del Master en una celda específica
+ */
+function crearDesplegableMasterManana(sheet, fila, columna) {
+  const VIS = CONFIG.ESTADOS_VISIBLES;
+  const opciones = [VIS.ASIGNAR_MANANA, VIS.LIBERAR_MASTER];
+  
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  
+  sheet.getRange(fila, columna).setDataValidation(regla);
+}
+
+/**
+ * Crea desplegable TARDE del Master en una celda específica
+ */
+function crearDesplegableMasterTarde(sheet, fila, columna) {
+  const VIS = CONFIG.ESTADOS_VISIBLES;
+  const opciones = [VIS.ASIGNAR_T1, VIS.ASIGNAR_T2, VIS.ASIGNAR_T3, VIS.LIBERAR_MASTER];
+  
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  
+  sheet.getRange(fila, columna).setDataValidation(regla);
+}
+
+/**
+ * Crea desplegable de validación para celda de guía
+ */
+function crearDesplegableGuia(sheet, fila, columna) {
+  const VIS = CONFIG.ESTADOS_VISIBLES;
+  const opciones = [VIS.NO_DISPONIBLE, VIS.LIBERAR];
+  
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  
+  sheet.getRange(fila, columna).setDataValidation(regla);
+}

@@ -9,28 +9,19 @@ class ClaseGuia {
     this.nombre = nombre;
     this.email = email;
     this.fileId = fileId;
-    this.turnos = new Map(); // Mapa de fecha+turno -> ClaseTurno
+    this.turnos = new Map();
   }
   
-  /**
-   * Agrega un turno a este guía
-   */
   agregarTurno(fecha, tipoTurno, turno) {
     const key = `${fecha.getTime()}_${tipoTurno}`;
     this.turnos.set(key, turno);
   }
   
-  /**
-   * Obtiene un turno específico
-   */
   obtenerTurno(fecha, tipoTurno) {
     const key = `${fecha.getTime()}_${tipoTurno}`;
     return this.turnos.get(key);
   }
   
-  /**
-   * Obtiene todos los turnos
-   */
   obtenerTodosTurnos() {
     return Array.from(this.turnos.values());
   }
@@ -39,16 +30,15 @@ class ClaseGuia {
 class ClaseTurno {
   constructor(fecha, tipoTurno, guia) {
     this.fecha = fecha;
-    this.tipoTurno = tipoTurno; // 'MANANA', 'T1', 'T2', 'T3'
+    this.tipoTurno = tipoTurno;
     this.guia = guia;
     
-    // Estados desde ambas hojas
     this.estadoMaster = '';
     this.estadoGuia = '';
     this.lockStatusGuia = '';
     this.timestampGuia = null;
+    this.timestampMaster = null;
     
-    // Estado resuelto después de aplicar reglas
     this.estadoFinal = '';
     this.lockStatusFinal = '';
     this.requiereActualizacionMaster = false;
@@ -56,24 +46,16 @@ class ClaseTurno {
     this.requiereNotificacion = false;
   }
   
-  /**
-   * Aplica la lógica de resolución de conflictos
-   * Regla principal: First Wins usando timestamp
-   * Jerarquía: Master > Guía cuando hay conflicto de autoridad
-   */
   resolverEstado() {
     const LOCK = CONFIG.LOCK_STATUS;
     const VIS = CONFIG.ESTADOS_VISIBLES;
     
-    // CASO 1: Guía marca NO DISPONIBLE
     if (this.estadoGuia === VIS.NO_DISPONIBLE) {
       if (this.lockStatusGuia === LOCK.GUIA_NO_DISPONIBLE) {
-        // Ya está procesado
         this.estadoFinal = VIS.NO_DISPONIBLE;
         this.lockStatusFinal = LOCK.GUIA_NO_DISPONIBLE;
         this.requiereActualizacionMaster = (this.estadoMaster !== VIS.NO_DISPONIBLE);
       } else {
-        // Nueva marca de NO DISPONIBLE
         this.estadoFinal = VIS.NO_DISPONIBLE;
         this.lockStatusFinal = LOCK.GUIA_NO_DISPONIBLE;
         this.requiereActualizacionMaster = true;
@@ -82,60 +64,70 @@ class ClaseTurno {
       return;
     }
     
-    // CASO 2: Master asigna un turno
     const asignacionesMaster = [VIS.ASIGNAR_MANANA, VIS.ASIGNAR_T1, VIS.ASIGNAR_T2, VIS.ASIGNAR_T3];
     if (asignacionesMaster.includes(this.estadoMaster)) {
       const lockCorrespondiente = this._getLockParaAsignacion(this.estadoMaster);
       
-      // Si el turno ya está asignado con este lock, no hacer nada
       if (this.lockStatusGuia === lockCorrespondiente) {
         this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
         this.lockStatusFinal = lockCorrespondiente;
-      } else if (this.lockStatusGuia === LOCK.GUIA_NO_DISPONIBLE) {
-        // Conflicto: Master intenta asignar pero guía marcó NO DISPONIBLE
-        // Aplicar First Wins: comparar timestamps
-        // Si no hay timestamp del master, asumir que es más reciente
-        this.estadoFinal = VIS.NO_DISPONIBLE;
-        this.lockStatusFinal = LOCK.GUIA_NO_DISPONIBLE;
-        // Master no puede sobreescribir - mantener NO DISPONIBLE
-        this.requiereActualizacionMaster = true;
-      } else {
-        // Asignación nueva o reasignación
-        this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
-        this.lockStatusFinal = lockCorrespondiente;
-        this.requiereActualizacionMaster = true;
-        this.requiereActualizacionGuia = true;
-        this.requiereNotificacion = true;
+        return;
+      } 
+      
+      if (this.lockStatusGuia === LOCK.GUIA_NO_DISPONIBLE) {
+        if (this.timestampMaster && this.timestampGuia) {
+          if (this.timestampMaster < this.timestampGuia) {
+            this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
+            this.lockStatusFinal = lockCorrespondiente;
+            this.requiereActualizacionMaster = true;
+            this.requiereActualizacionGuia = true;
+            this.requiereNotificacion = true;
+          } else {
+            this.estadoFinal = VIS.NO_DISPONIBLE;
+            this.lockStatusFinal = LOCK.GUIA_NO_DISPONIBLE;
+            this.requiereActualizacionMaster = true;
+          }
+        } else {
+          this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
+          this.lockStatusFinal = lockCorrespondiente;
+          this.requiereActualizacionMaster = true;
+          this.requiereActualizacionGuia = true;
+          this.requiereNotificacion = true;
+        }
+        return;
       }
+      
+      this.estadoFinal = this._getEstadoVisibleParaLock(lockCorrespondiente);
+      this.lockStatusFinal = lockCorrespondiente;
+      this.requiereActualizacionMaster = true;
+      this.requiereActualizacionGuia = true;
+      this.requiereNotificacion = true;
       return;
     }
     
-    // CASO 3: Master libera un turno
     if (this.estadoMaster === VIS.LIBERAR_MASTER) {
       if (this.lockStatusGuia.startsWith('M-A')) {
-        // Liberar asignación previa
         this.estadoFinal = this._getEstadoInicial();
         this.lockStatusFinal = LOCK.LIBERADO_MASTER;
         this.requiereActualizacionMaster = true;
         this.requiereActualizacionGuia = true;
       } else {
-        // Ya estaba libre o era del guía
         this.estadoFinal = this.estadoGuia || this._getEstadoInicial();
         this.lockStatusFinal = this.lockStatusGuia || LOCK.VACIO;
       }
       return;
     }
     
-    // CASO 4: Guía libera un turno
     if (this.estadoGuia === VIS.LIBERAR) {
       if (this.lockStatusGuia === LOCK.GUIA_NO_DISPONIBLE) {
-        // Liberar NO DISPONIBLE
         this.estadoFinal = this._getEstadoInicial();
         this.lockStatusFinal = LOCK.LIBERADO_GUIA;
         this.requiereActualizacionMaster = true;
         this.requiereActualizacionGuia = true;
+      } else if (this.lockStatusGuia.startsWith('M-A')) {
+        this.estadoFinal = this._getEstadoVisibleParaLock(this.lockStatusGuia);
+        this.lockStatusFinal = this.lockStatusGuia;
       } else {
-        // Ya estaba libre
         this.estadoFinal = this._getEstadoInicial();
         this.lockStatusFinal = LOCK.VACIO;
         this.requiereActualizacionGuia = true;
@@ -143,26 +135,20 @@ class ClaseTurno {
       return;
     }
     
-    // CASO 5: Estados estables - propagar desde guía a master si es necesario
     if (this.lockStatusGuia) {
       this.estadoFinal = this._getEstadoVisibleParaLock(this.lockStatusGuia);
       this.lockStatusFinal = this.lockStatusGuia;
       
-      // Verificar si master necesita actualización
       const estadoEsperadoMaster = this._getEstadoMasterParaLock(this.lockStatusGuia);
       if (this.estadoMaster !== estadoEsperadoMaster) {
         this.requiereActualizacionMaster = true;
       }
     } else {
-      // Estado inicial
       this.estadoFinal = this._getEstadoInicial();
       this.lockStatusFinal = LOCK.VACIO;
     }
   }
   
-  /**
-   * Helpers privados
-   */
   _getLockParaAsignacion(estadoMaster) {
     const VIS = CONFIG.ESTADOS_VISIBLES;
     const LOCK = CONFIG.LOCK_STATUS;
