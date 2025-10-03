@@ -141,6 +141,7 @@ function leerEstadoCalendarioGuia(guia) {
     Logger.log(`Error leyendo calendario de ${guia.codigo}: ${error.toString()}`);
   }
 }
+
 /**
  * Lee los días de un calendario de guía específico
  */
@@ -148,6 +149,8 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
   const COL_LOCK = CONFIG.GUIA_CAL.COL_LOCK_STATUS;
   const COL_TIMESTAMP = CONFIG.GUIA_CAL.COL_TIMESTAMP;
   const FILAS_POR_DIA = 3;
+  
+  Logger.log(`\n>>> Leyendo calendario ${guia.codigo} - Mes ${mes}/${anio}`);
   
   // Iterar por BLOQUES de 3 filas (número día, MAÑANA, TARDE)
   // Empezar desde fila 1 (después de encabezados) y avanzar de 3 en 3
@@ -163,6 +166,7 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
         
         try {
           const fecha = new Date(anio, mes - 1, numeroDia);
+          const fechaStr = `${numeroDia.toString().padStart(2,'0')}/${mes.toString().padStart(2,'0')}/${anio}`;
           
           // Leer MAÑANA (fila del bloque + 1)
           const filaManana = rowBloque + 1;
@@ -171,6 +175,8 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
           const estadoManana = data[filaManana][col] || '';
           const lockManana = data[filaManana][COL_LOCK] || '';
           const timestampManana = data[filaManana][COL_TIMESTAMP] || null;
+          
+          Logger.log(`  Día ${numeroDia} Col ${col}: MAÑANA="${estadoManana}" Lock="${lockManana}"`);
           
           let turnoManana = guia.obtenerTurno(fecha, 'MANANA');
           if (!turnoManana) {
@@ -189,6 +195,8 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
           const lockTarde = data[filaTarde][COL_LOCK] || '';
           const timestampTarde = data[filaTarde][COL_TIMESTAMP] || null;
           
+          Logger.log(`  Día ${numeroDia} Col ${col}: TARDE="${estadoTarde}" Lock="${lockTarde}"`);
+          
           const tipoTarde = determinarTipoTurnoTarde(estadoTarde);
           let turnoTarde = guia.obtenerTurno(fecha, tipoTarde);
           if (!turnoTarde) {
@@ -205,10 +213,13 @@ function leerDiasCalendarioGuia(data, mes, anio, guia) {
       }
     }
   }
+  
+  Logger.log(`<<< Fin lectura ${guia.codigo} - Total turnos: ${guia.obtenerTodosTurnos().length}`);
 }
 
 /**
  * Escribe los estados resueltos en la Hoja Maestra
+ * CORREGIDO: Maneja liberaciones y recrea desplegables
  */
 function escribirEstadosEnHojaMaestra(guias) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -231,6 +242,7 @@ function escribirEstadosEnHojaMaestra(guias) {
     // Preparar actualizaciones
     const actualizaciones = [];
     const formateos = [];
+    const desplegablesRecrear = []; // NUEVO: Rastrear celdas que necesitan desplegable
     
     for (let i = 2; i < data.length; i++) {
       const fecha = data[i][0];
@@ -240,56 +252,72 @@ function escribirEstadosEnHojaMaestra(guias) {
         const turnoManana = guia.obtenerTurno(fecha, 'MANANA');
         const turnoTarde = buscarTurnoTarde(guia, fecha);
         
+        // MAÑANA
         if (turnoManana && turnoManana.requiereActualizacionMaster) {
           const estadoFinal = turnoManana.estadoFinal;
           
-          // SOLO escribir estados NO vacíos
-          // Estados válidos: "NO DISPONIBLE", "ASIGNADO M"
-          if (estadoFinal === VIS.NO_DISPONIBLE || estadoFinal === VIS.ASIGNADO_M) {
-            actualizaciones.push({
+          // CAMBIO CRÍTICO: Escribir SIEMPRE, incluso si está vacío
+          actualizaciones.push({
+            fila: i + 1,
+            columna: columnas.manana + 1,
+            valor: estadoFinal
+          });
+          
+          const color = obtenerColorParaEstado(estadoFinal);
+          formateos.push({
+            fila: i + 1,
+            columna: columnas.manana + 1,
+            color: color
+          });
+          
+          // Si el estado es vacío, necesita desplegable
+          if (estadoFinal === '' || estadoFinal === VIS.MANANA_INICIAL) {
+            desplegablesRecrear.push({
               fila: i + 1,
               columna: columnas.manana + 1,
-              valor: estadoFinal
-            });
-            
-            const color = obtenerColorParaEstado(estadoFinal);
-            formateos.push({
-              fila: i + 1,
-              columna: columnas.manana + 1,
-              color: color
+              tipo: 'MANANA'
             });
           }
         }
         
+        // TARDE
         if (turnoTarde && turnoTarde.requiereActualizacionMaster) {
           const estadoFinal = turnoTarde.estadoFinal;
           
-          // SOLO escribir estados NO vacíos
-          // Estados válidos: "NO DISPONIBLE", "ASIGNADO T1/T2/T3"
-          if (estadoFinal === VIS.NO_DISPONIBLE || 
-              estadoFinal === VIS.ASIGNADO_T1 || 
-              estadoFinal === VIS.ASIGNADO_T2 || 
-              estadoFinal === VIS.ASIGNADO_T3) {
-            actualizaciones.push({
+          // CAMBIO CRÍTICO: Escribir SIEMPRE, incluso si está vacío
+          actualizaciones.push({
+            fila: i + 1,
+            columna: columnas.tarde + 1,
+            valor: estadoFinal
+          });
+          
+          const color = obtenerColorParaEstado(estadoFinal);
+          formateos.push({
+            fila: i + 1,
+            columna: columnas.tarde + 1,
+            color: color
+          });
+          
+          // Si el estado es vacío, necesita desplegable
+          if (estadoFinal === '' || estadoFinal === VIS.TARDE_INICIAL) {
+            desplegablesRecrear.push({
               fila: i + 1,
               columna: columnas.tarde + 1,
-              valor: estadoFinal
-            });
-            
-            const color = obtenerColorParaEstado(estadoFinal);
-            formateos.push({
-              fila: i + 1,
-              columna: columnas.tarde + 1,
-              color: color
+              tipo: 'TARDE'
             });
           }
         }
       }
     }
     
-    // Aplicar actualizaciones en lote
+    // Aplicar actualizaciones y formatos
     aplicarActualizacionesEnLote(sheet, actualizaciones);
     aplicarFormateosEnLote(sheet, formateos);
+    
+    // NUEVO: Recrear desplegables del Master donde sea necesario
+    for (const desp of desplegablesRecrear) {
+      crearDesplegableMaster(sheet, desp.fila, desp.columna, desp.tipo);
+    }
   }
 }
 
@@ -437,4 +465,25 @@ function procesarNotificacionesYCalendario(guias) {
       }
     }
   }
+}
+
+/**
+ * NUEVA: Crea desplegable del Master en una celda específica
+ */
+function crearDesplegableMaster(sheet, fila, columna, tipo) {
+  const VIS = CONFIG.ESTADOS_VISIBLES;
+  
+  let opciones;
+  if (tipo === 'MANANA') {
+    opciones = [VIS.ASIGNAR_MANANA, VIS.LIBERAR_MASTER];
+  } else {
+    opciones = [VIS.ASIGNAR_T1, VIS.ASIGNAR_T2, VIS.ASIGNAR_T3, VIS.LIBERAR_MASTER];
+  }
+  
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  
+  sheet.getRange(fila, columna).setDataValidation(regla);
 }
